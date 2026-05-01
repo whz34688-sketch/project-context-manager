@@ -1,8 +1,8 @@
 interface:
   display_name: "Project Context Manager"
-  short_description: "Persist project state across long-running work"
+  short_description: "Keep long-running project context in files"
   brand_color: "#2563EB"
-  default_prompt: "Use $project-context-manager to initialize file-based project state and keep this project resumable across sessions."
+  default_prompt: "Use $project-context-manager to validate or initialize this project's context files, then continue from the recorded next task."
 
 policy:
   allow_implicit_invocation: true

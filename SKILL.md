@@ -1,287 +1,231 @@
 ---
 name: project-context-manager
-description: Use when managing a long-running, iterative, or multi-session project where project state should be persisted in PROJECT_STATE.md, TASK_LOG.md, and NEXT_TASK.md instead of relying on conversation history. Use for ongoing coding, writing, research, product, or exploratory work that needs reliable resume context across sessions; do not use for simple one-off tasks.
+description: Use when an AI agent is managing a long-running, iterative, or multi-session project and must persist project state in PROJECT_STATE.md, NEXT_TASK.md, and TASK_LOG.md instead of relying on conversation history. Use for coding, writing, research, product, or exploratory projects that need reliable resume context across sessions; do not use for simple one-off tasks.
 ---
 
 # Project Context Manager
 
-This skill keeps project memory in files, not in the conversation.
+This skill makes the project folder the source of truth. Conversation history is temporary; project state files are durable.
 
-Core principle: do not rely on conversation history as the source of truth for project state. Preserve the current project state in structured files at the project root.
+Resolve bundled resources relative to this `SKILL.md` file:
 
-## Core Files
+- `scripts/init_context.py`
+- `scripts/validate_context.py`
+- `templates/PROJECT_STATE.template.md`
+- `templates/NEXT_TASK.template.md`
+- `templates/TASK_LOG.template.md`
 
-Maintain these files in the project root:
+## Core Rule
 
-- `PROJECT_STATE.md`: current truth of the project.
+For managed projects, always work from these files in the project root:
+
+- `PROJECT_STATE.md`: current project truth.
 - `NEXT_TASK.md`: active execution pointer.
 - `TASK_LOG.md`: historical progress log.
 
+Use code for deterministic work:
+
+- Create missing state files with `scripts/init_context.py`.
+- Check state file structure with `scripts/validate_context.py`.
+- Do not hand-create the three files unless the script is unavailable.
+
+Use agent judgment only for semantic work:
+
+- Understanding the user's current goal.
+- Choosing Defined vs Exploratory mode.
+- Updating project-specific decisions, progress, and next actions.
+
+## Execution Workflow
+
+Follow this workflow whenever the skill is invoked.
+
+Think of the workflow as a state machine:
+
+1. Validate context files.
+2. Choose one branch: First Run, Resume, Partial Repair, or Structure Repair.
+3. Prepare `NEXT_TASK.md`.
+4. Execute project work.
+5. Update state files.
+6. Validate again.
+
+### 1. Select Project Root
+
+Use the current workspace root unless the user explicitly names another project folder.
+
+If the project root is ambiguous, ask one concise question for the path before changing files.
+
+### 2. Run Context Validation
+
+Run:
+
+```bash
+python scripts/validate_context.py --root <project-root>
+```
+
+Interpret the result:
+
+- No core files exist: start the First Run workflow.
+- Some core files are missing: run initialization to create only the missing files, then reconcile.
+- All core files exist: start the Resume workflow.
+- Files exist but validation reports structural errors: repair structure before continuing when safe; ask only if the correct repair is unclear.
+
+### 3. First Run Workflow
+
+Use this only when no core files exist.
+
+Do not run initialization until the project is clear enough to write a useful first state.
+
+First extract these fields from the user's message:
+
+- Project goal: what the user wants to accomplish.
+- Desired output: the artifact, product, report, codebase, document, or decision the project should produce.
+- User plan: any steps, roadmap, or constraints the user already provided.
+- Immediate next action: the first concrete step the agent can take.
+- Validation criteria: how the user or agent will know the next step worked.
+
+Treat the project as Defined Mode only when all three are identifiable:
+
+- Project goal.
+- Desired output or deliverable.
+- Immediate next action.
+
+Treat the project as Exploratory Mode when two or more are missing, or when the user is brainstorming instead of asking for execution.
+
+If the user already has a plan, do not replace it with a new plan. Ask only for missing details that materially affect execution, then convert the user's plan into `NEXT_TASK.md`.
+
+If the user does not have a clear plan, design the next step through conversation. Ask one to three intake questions about:
+
+- Goal.
+- Desired output.
+- Current idea or constraints.
+- First priority.
+
+Good intake questions are concrete:
+
+- "What should exist at the end of the first version?"
+- "Who is this for?"
+- "Do you want me to plan first, implement first, or explore options first?"
+- "Are there any files, technologies, or directions I must avoid?"
+
+After the user answers, summarize the chosen direction in one short paragraph. If the user agrees or the direction is safe to infer, proceed.
+
+After the mode and first task are clear enough, run:
+
+```bash
+python scripts/init_context.py --root <project-root> --mode <defined|exploratory> --project-name "<name>" --project-description "<summary>" --current-task "<first task>"
+```
+
+Then edit the created files narrowly:
+
+- Fill `PROJECT_STATE.md` with confirmed project truth: goal, mode, current understanding, constraints, decisions, and open questions.
+- Fill `NEXT_TASK.md` with the first executable or exploratory step: current task, status, remaining steps, next action, scope boundaries, and validation criteria.
+- Leave `TASK_LOG.md` as an append-only history; the initialization script already creates the first entry.
+
+Run validation again before executing project work.
+
+### 4. Resume Workflow
+
+Use this when core files already exist.
+
+Read:
+
+- `PROJECT_STATE.md`
+- `NEXT_TASK.md`
+
+Do not read `TASK_LOG.md` by default.
+
+Read recent `TASK_LOG.md` entries only when needed for:
+
+- Debugging.
+- Recovering interrupted work.
+- Reviewing prior decisions.
+- Understanding a conflict between current files and the user request.
+
+If the user says only "continue this project", continue from `NEXT_TASK.md`.
+
+If the user gives a new instruction, compare it with `PROJECT_STATE.md` and `NEXT_TASK.md`:
+
+- If it is consistent, update `NEXT_TASK.md` and execute.
+- If it changes the project goal, approach, or constraints, update `PROJECT_STATE.md` first.
+- If it conflicts with old files, follow the user's latest explicit instruction and repair the files.
+- If it is ambiguous, ask one concise question before editing project files.
+
+### 5. Before Execution
+
+Before substantial project changes, make sure `NEXT_TASK.md` states:
+
+- Current task.
+- Scope boundaries.
+- Next action.
+- Validation criteria.
+
+If any of these are missing:
+
+- Fill them from the user's request when safe.
+- If unsafe to infer, ask one concise question.
+- Do not start broad implementation while `NEXT_TASK.md` lacks a next action or validation criteria.
+
+If the user asks a tiny one-step question, this update can wait until the end.
+
+### 6. Execute The Task
+
+Do the requested project work using the repository's normal tools and conventions.
+
+Keep the state files as operational context, not as a substitute for reading the actual code or source files.
+
+### 7. End Of Task
+
+When meaningful progress occurred, update in this order:
+
+1. Append a concise entry to `TASK_LOG.md`.
+2. Update `NEXT_TASK.md` with current status and next action.
+3. Update `PROJECT_STATE.md` only if project-level truth changed.
+4. Run:
+
+```bash
+python scripts/validate_context.py --root <project-root>
+```
+
+In the final response, mention:
+
+- What project work was completed.
+- Which state files were updated.
+- Any validation result or remaining blocker.
+
 ## Conflict Rules
 
-- If project files conflict with older conversation history, trust the files.
-- If project files conflict with the user's latest explicit instruction, follow the latest user instruction and update the files.
-- If the files appear stale, incomplete, or internally inconsistent, repair them before continuing when the correct state can be inferred.
-- Ask the user only when the next action or project goal cannot be inferred safely.
-- Preserve user-written content. Make narrow edits to state files and avoid rewriting entire files unless restructuring is necessary.
+- Latest explicit user instruction overrides stale project files.
+- Project files override older conversation history.
+- If project files are stale but the correct state is inferable, update them before continuing.
+- Preserve user-written content. Make narrow edits and avoid full rewrites unless restructuring is required.
+- Never overwrite existing state files with templates unless the user explicitly asks or `--force` is intentionally used.
 
-## Startup Workflow
+## Update Rules
 
-At the start of an invoked task:
-
-1. Check whether `PROJECT_STATE.md`, `NEXT_TASK.md`, and `TASK_LOG.md` exist in the project root.
-2. If none exist, treat this as a new managed project:
-   - Run the Project Intake workflow below.
-   - Create all three files using the templates below.
-   - Fill `PROJECT_STATE.md` with the confirmed or inferred project direction.
-   - Fill `NEXT_TASK.md` with the first concrete action or exploration step.
-   - Create `TASK_LOG.md` as the historical log.
-3. If some but not all files exist, create the missing files and reconcile them with the existing files.
-4. Read `PROJECT_STATE.md` and `NEXT_TASK.md`.
-5. Do not read `TASK_LOG.md` by default. Read only recent entries when needed for debugging, recovery, review, or understanding prior decisions.
-6. Determine whether the project is in Defined Mode or Exploratory Mode.
-7. Execute the user's task.
-
-## Project Intake
-
-Use this workflow when starting a managed project with no existing core files.
-
-First assess whether the user's project request is clear enough to start.
-
-Treat the project as clear enough to start when:
-
-- The goal is specific enough to act on.
-- The desired output is identifiable.
-- The immediate next action can be chosen without guessing.
-- Missing details can be resolved while working.
-
-For a clear project:
-
-- Ask only for missing requirements that would materially affect execution.
-- Create `PROJECT_STATE.md` from the confirmed or inferred requirements.
-- Create `NEXT_TASK.md` with the first actionable task.
-- Create `TASK_LOG.md` as the historical log.
-- Begin guiding or executing the project.
-
-Treat the project as unclear when:
-
-- The goal is vague or still forming.
-- The desired output is unknown or has several plausible forms.
-- The user is brainstorming rather than requesting execution.
-- The next action would require guessing the user's intent.
-
-For an unclear project:
-
-- Ask one to three concise intake questions about the user's goal, current idea, desired output, constraints, and first priority.
-- Summarize the clarified direction.
-- Create `PROJECT_STATE.md` from that summary.
-- Create `NEXT_TASK.md` with the next exploration step.
-- Create `TASK_LOG.md` as the historical log.
-- Continue guiding the project from the clarified state.
-
-If the mode is unclear after reading the user's request, ask one to three concise intake questions before creating or updating `PROJECT_STATE.md`.
-
-## Project Modes
-
-### Defined Mode
-
-Use when the project has clear goals, stable requirements, and execution-focused incremental work.
-
-Update frequency:
-
-- `PROJECT_STATE.md`: low frequency; update only for project-level changes.
-- `NEXT_TASK.md`: update when task state, priority, or direction changes.
-- `TASK_LOG.md`: append when meaningful progress occurs.
-
-### Exploratory Mode
-
-Use when goals are evolving, assumptions are still being tested, or the project requires iterative clarification.
-
-Update frequency:
-
-- `PROJECT_STATE.md`: medium to high frequency; capture evolving understanding.
-- `NEXT_TASK.md`: update when exploration direction or immediate next steps change.
-- `TASK_LOG.md`: append for meaningful findings, decisions, and validation.
-
-## File Responsibilities
-
-### PROJECT_STATE.md
-
-Purpose: current state, not history.
-
-Read at the start of each managed task. Update only when the project-level truth changes, such as:
+`PROJECT_STATE.md` changes only when project truth changes:
 
 - Goal changes.
 - Architecture or approach changes.
-- Key decision changes.
+- Key decisions.
 - Major progress milestones.
-- Refined understanding in Exploratory Mode.
 - New constraints, risks, or open questions.
+- Refined understanding in Exploratory Mode.
 
-Do not update for minor implementation details.
+`NEXT_TASK.md` changes when execution state changes:
 
-### NEXT_TASK.md
-
-Purpose: current task and resume pointer.
-
-Read at the start of each managed task. Update when:
-
-- The active task progresses significantly.
-- The active task completes.
-- Work is interrupted.
+- Task starts, progresses, completes, or is interrupted.
 - Scope, priority, or direction changes.
 - Work is split into subtasks.
 - Validation criteria change.
 
-### TASK_LOG.md
+`TASK_LOG.md` changes when meaningful progress occurs:
 
-Purpose: historical record of meaningful progress.
-
-Do not read by default. When needed, prefer recent entries only.
-
-Append an entry when there is meaningful progress, such as:
-
-- Bug fixes.
 - Feature completion.
-- Structural changes.
-- Validation steps.
-- Decision points.
-- Important findings.
-- Blockers or failed approaches that affect future work.
+- Bug fix.
+- Structural change.
+- Validation result.
+- Decision point.
+- Important finding.
+- Blocker that affects future work.
 
-Do not log trivial file reads, passive discussion, idle exploration, or repeated failed commands unless they reveal a meaningful finding.
-
-## End Workflow
-
-At the end of a managed task:
-
-1. Append to `TASK_LOG.md` if meaningful progress occurred.
-2. Update `NEXT_TASK.md` if the task state changed.
-3. Update `PROJECT_STATE.md` if project-level state changed.
-4. Keep updates concise and scannable.
-5. In the final user response, mention any state files updated.
-
-## Templates
-
-Use these templates when initializing missing files. Keep headings stable unless there is a strong reason to adapt them.
-
-### PROJECT_STATE.md
-
-```markdown
-# Project State
-
-## Project Description
-
-TBD
-
-## Current Goals
-
-- TBD
-
-## Current Understanding
-
-- TBD
-
-## Technical Approach
-
-- TBD
-
-## System Structure
-
-- TBD
-
-## Key Constraints
-
-- TBD
-
-## Key Decisions
-
-- TBD
-
-## Current Progress
-
-- TBD
-
-## Known Limitations
-
-- TBD
-
-## Environment Notes
-
-- TBD
-
-## Open Questions
-
-- TBD
-
-## Exploratory Notes
-
-- Initial assumptions: TBD
-- Corrected misunderstandings: TBD
-- Discarded approaches: TBD
-- Current exploration direction: TBD
-```
-
-### NEXT_TASK.md
-
-```markdown
-# Next Task
-
-## Current Task
-
-TBD
-
-## Status
-
-Not started
-
-## Completed Steps
-
-- TBD
-
-## Remaining Steps
-
-- TBD
-
-## Next Action
-
-TBD
-
-## Scope Constraints
-
-- TBD
-
-## Validation Criteria
-
-- TBD
-
-## Resume Instructions
-
-TBD
-```
-
-### TASK_LOG.md
-
-```markdown
-# Task Log
-
-Historical record of meaningful progress. Newest entries may be appended at the top or bottom, but keep one consistent order.
-
-## YYYY-MM-DD - Initial Project Setup
-
-- Task performed: Initialized project context files.
-- Files or components affected: `PROJECT_STATE.md`, `NEXT_TASK.md`, `TASK_LOG.md`.
-- Changes made: Created baseline context management files.
-- Validation or outcome: Project can be resumed from file-based state.
-- Outstanding issues: TBD.
-- New findings: TBD.
-```
-
-## Practical Update Rules
-
-- Prefer concise bullets over long narrative.
-- Keep `PROJECT_STATE.md` deduplicated and current.
-- Keep `NEXT_TASK.md` specific enough that another session can resume immediately.
-- Keep `TASK_LOG.md` append-only unless correcting a factual error.
-- If a task spans many steps, update `NEXT_TASK.md` during the task, not only at the end.
-- If the repository already has its own planning or state files, ask before replacing them; otherwise, map this skill's files to the existing convention when the mapping is obvious.
+Do not log passive discussion, trivial file reads, or repeated failed commands unless they reveal a meaningful finding.
